@@ -8,7 +8,7 @@ export default function MTIDashboard() {
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
 
-  const API_URL = 'http://localhost:8000';
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
   useEffect(() => {
     const fetchDashboard = async () => {
