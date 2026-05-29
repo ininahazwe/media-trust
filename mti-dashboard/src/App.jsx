@@ -54,7 +54,7 @@ export default function MTIDashboard() {
     fetchDashboard();
 
     // ⚡ Auto-refresh toutes les 10 secondes (Kobo sync rapide)
-    const interval = setInterval(fetchDashboard, 10000);
+    const interval = setInterval(fetchDashboard, 60000);
 
     return () => clearInterval(interval);
   }, []);
@@ -140,7 +140,7 @@ export default function MTIDashboard() {
               </div>
               <div className="text-right">
                 <p className="text-gray-600 text-xs">
-                  🔄 Auto-refresh: 10s
+                  🔄 Auto-refresh: 1min
                 </p>
                 {lastSync && (
                     <p className="text-gray-400 text-xs mt-1">

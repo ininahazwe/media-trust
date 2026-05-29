@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional
 
@@ -11,8 +11,7 @@ class OutletResponse(OutletCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class RespondentCreate(BaseModel):
     outlet_id: int
@@ -24,8 +23,7 @@ class RespondentResponse(RespondentCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ResponseCreate(BaseModel):
     outlet_id: int
@@ -43,8 +41,7 @@ class ResponseSchema(ResponseCreate):
     id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class MTIIndexResponse(BaseModel):
     id: int
@@ -52,8 +49,7 @@ class MTIIndexResponse(BaseModel):
     mti_score: float
     last_updated: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DashboardStats(BaseModel):
     total_outlets: int
