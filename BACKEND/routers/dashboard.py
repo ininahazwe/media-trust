@@ -37,23 +37,28 @@ OUTLET_TYPE_MAP = {
     "asaase": "Radio", "omanfm": "Radio", "oman fm": "Radio",
     "metro tv": "TV", "metro": "TV",
     "adom tv": "TV", "ghone": "TV", "gh one": "TV",
-    "tv3": "TV", "gbc": "TV",
+    "tv3": "TV", "gbc": "TV", "utv": "TV",
     "citinewsroom": "Online", "myjoyonline": "Online",
-    "graphic": "Print", "daily graphic": "Print",
+    "joy news": "TV", "joynews": "TV",
+    "the fourth estate": "Online", "fourth estate": "Online",
+    "ghanaweb": "Online",
+    "graphic online": "Online", "graphic": "Print", "daily graphic": "Print",
 }
 
 def guess_outlet_type(name):
     n = name.lower().strip()
-    for k, v in OUTLET_TYPE_MAP.items():
+    # Longest keys first so e.g. "graphic online" wins over the bare "graphic"
+    for k in sorted(OUTLET_TYPE_MAP, key=len, reverse=True):
         if k in n:
-            return v
+            return OUTLET_TYPE_MAP[k]
     if any(x in n for x in ["fm", "radio"]):
         return "Radio"
     if any(x in n for x in ["tv", "television"]):
         return "TV"
-    if any(x in n for x in ["online", "news", ".com", ".gh"]):
+    if any(x in n for x in ["online", "news", ".com", ".gh", "web"]):
         return "Online"
-    return "Radio"
+    # Unmatched name: don't silently guess "Radio", flag it for review instead
+    return "Unknown"
 
 def kobo_to_score(value):
     if not value:
@@ -71,8 +76,24 @@ async def get_dashboard(db: Session = Depends(get_db)):
     total_respondents = db.query(func.count(Respondent.id)).scalar() or 0
     total_responses = db.query(func.count(Response.id)).scalar() or 0
 
-    mti_scores = db.query(MTIIndex.mti_score).all()
-    average_mti = sum(s[0] for s in mti_scores) / len(mti_scores) if mti_scores else 0
+    # average_mti doit être pondéré par réponse individuelle, pas par outlet :
+    # une simple moyenne des MTIIndex.mti_score par outlet donne le même poids
+    # à un outlet avec 1 réponse qu'à un outlet avec 4 réponses, ce qui biaise
+    # fortement le score global dès que les échantillons par outlet sont petits.
+    all_responses = db.query(Response).all()
+    if all_responses:
+        n = len(all_responses)
+        average_mti = sum(
+            r.accuracy_score * 0.20 +
+            r.verification_score * 0.20 +
+            r.independence_score * 0.20 +
+            r.fair_balanced_score * 0.15 +
+            r.public_interest_score * 0.15 +
+            r.corrections_score * 0.10
+            for r in all_responses
+        ) / n
+    else:
+        average_mti = 0
 
     top_outlets_query = db.query(
         Outlet.id,
@@ -330,6 +351,29 @@ async def calculate_mti_for_all(db: Session = Depends(get_db)):
 
 
 # ============================================================
+# MAINTENANCE: backfill outlet_type sur les outlets déjà en base
+# ============================================================
+
+@router.post("/recalc-outlet-types")
+async def recalc_outlet_types(db: Session = Depends(get_db)):
+    """
+    sync-kobo ne réévalue outlet_type que pour les NOUVELLES soumissions
+    (les réponses déjà synchronisées sont "continue"-ées avant d'atteindre
+    ce code). Cet endpoint corrige les outlets déjà en base sans attendre
+    une nouvelle soumission Kobo.
+    """
+    outlets = db.query(Outlet).all()
+    changes = []
+    for outlet in outlets:
+        new_type = guess_outlet_type(outlet.outlet_name)
+        if outlet.outlet_type != new_type:
+            changes.append({"outlet": outlet.outlet_name, "old": outlet.outlet_type, "new": new_type})
+            outlet.outlet_type = new_type
+    db.commit()
+    return {"status": "success", "updated": len(changes), "changes": changes}
+
+
+# ============================================================
 # KOBO SYNC
 # ============================================================
 
@@ -376,7 +420,11 @@ async def sync_kobo_data(db: Session = Depends(get_db)):
                     db.add(outlet)
                     db.flush()
                 else:
-                    if outlet.outlet_type == "Radio" and outlet_type != "Radio":
+                    # Toujours réaligner sur le résultat du guesser (déterministe,
+                    # basé uniquement sur le nom) plutôt que de figer le premier
+                    # type deviné, qui pouvait rester faux à vie (ex: "Radio" par
+                    # défaut) puisqu'on ne le recorrigeait que Radio -> autre chose.
+                    if outlet.outlet_type != outlet_type:
                         outlet.outlet_type = outlet_type
 
                 # Respondent
