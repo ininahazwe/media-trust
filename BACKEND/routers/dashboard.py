@@ -27,22 +27,44 @@ RESPONSE_MAPPING = {
     "neither": 50,
     "disagree": 25,
     "strongly_disagree": 0,
+    # Depuis la migration du formulaire Kobo, l'API renvoie le code brut du
+    # choix (XLSForm "name") plutôt que son label pour les questions Likert
+    # grp_trust/mti_* : "5" = Strongly agree ... "1" = Strongly disagree.
+    # Sans ça, kobo_to_score() retombait sur le défaut (50) pour quasiment
+    # toutes les réponses synchronisées après la migration.
+    "5": 100,
+    "4": 75,
+    "3": 50,
+    "2": 25,
+    "1": 0,
 }
 
+# Codes/valeurs qui signifient "l'outlet sélectionné est 'Other'" plutôt
+# qu'un vrai nom d'outlet. Le formulaire renvoie parfois un code brut (ex:
+# "999") pour ce choix plutôt que le mot "other" — d'où le faux outlet "999"
+# qui apparaissait dans le dashboard.
+OTHER_OUTLET_CODES = {"other", "nan", "", "999", "-999", "none"}
+
 OUTLET_TYPE_MAP = {
+    # NB: l'API Kobo renvoie le code XLSForm brut pour rated_outlet, qui est
+    # un slug SANS espace (ex: "fourthestate", "graphiconline"), pas le nom
+    # humain avec espace. On garde les deux formes : la version concaténée
+    # pour matcher l'API, la version espacée pour les saisies manuelles via
+    # l'API CRUD /api/outlets (outlets.py) ou d'anciens exports.
     "citifm": "Radio", "citi fm": "Radio",
     "joyfm": "Radio", "joy fm": "Radio",
     "peacefm": "Radio", "peace fm": "Radio",
     "adomfm": "Radio", "adom fm": "Radio",
     "asaase": "Radio", "omanfm": "Radio", "oman fm": "Radio",
-    "metro tv": "TV", "metro": "TV",
-    "adom tv": "TV", "ghone": "TV", "gh one": "TV",
+    "metro tv": "TV", "metrotv": "TV", "metro": "TV",
+    "adom tv": "TV", "adomtv": "TV", "ghone": "TV", "gh one": "TV",
     "tv3": "TV", "gbc": "TV", "utv": "TV",
     "citinewsroom": "Online", "myjoyonline": "Online",
     "joy news": "TV", "joynews": "TV",
-    "the fourth estate": "Online", "fourth estate": "Online",
+    "the fourth estate": "Online", "fourth estate": "Online", "fourthestate": "Online",
     "ghanaweb": "Online",
-    "graphic online": "Online", "graphic": "Print", "daily graphic": "Print",
+    "graphic online": "Online", "graphiconline": "Online",
+    "daily graphic": "Print", "dailygraphic": "Print", "graphic": "Print",
 }
 
 def guess_outlet_type(name):
@@ -64,6 +86,25 @@ def kobo_to_score(value):
     if not value:
         return 50
     return RESPONSE_MAPPING.get(str(value).lower(), 50)
+
+def resolve_outlet_name(sub):
+    """
+    Détermine le nom d'outlet à partir d'une soumission Kobo brute, en gérant
+    le cas où l'utilisateur a choisi "Other" (code parfois "999" plutôt que
+    "other" selon le formulaire) : on retombe alors sur le champ texte libre
+    grp_outlets/rated_outlet_other, ou sur un label explicite s'il est vide,
+    plutôt que de laisser fuiter le code brut comme nom d'outlet.
+    """
+    outlet_name_raw = sub.get('grp_outlets/rated_outlet', '')
+    outlet_other_raw = sub.get('grp_outlets/rated_outlet_other', '')
+
+    if str(outlet_name_raw).strip().lower() in OTHER_OUTLET_CODES:
+        if str(outlet_other_raw).strip().lower() not in ('', 'nan'):
+            outlet_name_raw = outlet_other_raw
+        else:
+            outlet_name_raw = 'Unspecified Other Outlet'
+
+    return outlet_name_raw.title().strip() if outlet_name_raw else 'Unknown'
 
 
 # ============================================================
@@ -373,6 +414,81 @@ async def recalc_outlet_types(db: Session = Depends(get_db)):
     return {"status": "success", "updated": len(changes), "changes": changes}
 
 
+@router.post("/recalc-response-scores")
+async def recalc_response_scores(db: Session = Depends(get_db)):
+    """
+    Recalcule les 6 scores de dimension de chaque réponse déjà en base à
+    partir de raw_response_data._raw (la soumission Kobo brute, conservée
+    telle quelle au sync), et réassigne l'outlet si le nom résolu change
+    (fix du bug outlet "999"). Nécessaire car sync-kobo ignore les
+    submissions dont le kobo_submission_id existe déjà : corriger
+    kobo_to_score()/resolve_outlet_name() ne suffit pas à corriger les
+    lignes déjà importées, il faut les retraiter explicitement.
+    """
+    responses = db.query(Response).all()
+    updated_scores = 0
+    reassigned_outlets = 0
+
+    for resp in responses:
+        try:
+            raw = json.loads(resp.raw_response_data or '{}')
+            sub = raw.get('_raw', {})
+        except Exception:
+            continue
+        if not sub:
+            continue
+
+        new_scores = {
+            "accuracy_score":        float(kobo_to_score(sub.get('grp_trust/mti_accurate'))),
+            "verification_score":    float(kobo_to_score(sub.get('grp_trust/mti_verify'))),
+            "independence_score":    float(kobo_to_score(sub.get('grp_trust/mti_independent'))),
+            "fair_balanced_score":   float(kobo_to_score(sub.get('grp_trust/mti_fair'))),
+            "public_interest_score": float(kobo_to_score(sub.get('grp_trust/mti_public'))),
+            "corrections_score":     float(kobo_to_score(sub.get('grp_trust/mti_corrects'))),
+        }
+        if any(getattr(resp, k) != v for k, v in new_scores.items()):
+            for k, v in new_scores.items():
+                setattr(resp, k, v)
+            updated_scores += 1
+
+        correct_name = resolve_outlet_name(sub)
+        current_outlet = db.query(Outlet).filter(Outlet.id == resp.outlet_id).first()
+        if current_outlet and current_outlet.outlet_name != correct_name:
+            new_outlet = db.query(Outlet).filter(Outlet.outlet_name == correct_name).first()
+            if not new_outlet:
+                new_outlet = Outlet(
+                    outlet_name=correct_name,
+                    outlet_type=guess_outlet_type(correct_name),
+                    region=current_outlet.region,
+                )
+                db.add(new_outlet)
+                db.flush()
+            resp.outlet_id = new_outlet.id
+            reassigned_outlets += 1
+
+    db.commit()
+
+    # Nettoie les outlets devenus orphelins (0 réponses) suite aux réassignations
+    orphans_removed = []
+    for outlet in db.query(Outlet).all():
+        count = db.query(func.count(Response.id)).filter(Response.outlet_id == outlet.id).scalar() or 0
+        if count == 0:
+            orphans_removed.append(outlet.outlet_name)
+            db.query(MTIIndex).filter(MTIIndex.outlet_id == outlet.id).delete()
+            db.query(Respondent).filter(Respondent.outlet_id == outlet.id).delete()
+            db.delete(outlet)
+    db.commit()
+
+    await calculate_mti_for_all(db)
+
+    return {
+        "status": "success",
+        "responses_scores_updated": updated_scores,
+        "responses_outlet_reassigned": reassigned_outlets,
+        "orphan_outlets_removed": orphans_removed,
+    }
+
+
 # ============================================================
 # KOBO SYNC
 # ============================================================
@@ -406,10 +522,7 @@ async def sync_kobo_data(db: Session = Depends(get_db)):
 
                 # ── Outlet ──────────────────────────────────────────
                 # Nouveau champ: grp_outlets/rated_outlet (était: rating/outlet_name)
-                outlet_name_raw = sub.get('grp_outlets/rated_outlet', '')
-                if not outlet_name_raw or outlet_name_raw.lower() in ('other', 'nan', ''):
-                    outlet_name_raw = sub.get('grp_outlets/rated_outlet_other', 'Unknown')
-                outlet_name = outlet_name_raw.title().strip() if outlet_name_raw else 'Unknown'
+                outlet_name = resolve_outlet_name(sub)
                 outlet_type = guess_outlet_type(outlet_name)
                 # Région maintenant à la racine (était: geo/region)
                 outlet_region = sub.get('region', 'Unknown')
