@@ -9,11 +9,12 @@ from database import get_db
 from models import Outlet, Response, MTIIndex
 from schemas import OutletCreate, OutletResponse
 from sqlalchemy import func
+from typing import List  # list[X] (PEP 585) casse sur Python 3.6 du serveur
 
 router = APIRouter(prefix="/api/outlets", tags=["outlets"])
 
 # ✅ GET ALL OUTLETS
-@router.get("/", response_model=list[OutletResponse])
+@router.get("/", response_model=List[OutletResponse])
 async def get_all_outlets(db: Session = Depends(get_db)):
     """
     Récupère tous les outlets avec leurs scores MTI

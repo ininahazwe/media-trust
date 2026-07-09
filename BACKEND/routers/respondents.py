@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Respondent, Outlet
 from schemas import RespondentCreate, RespondentResponse
+from typing import List  # list[X] (PEP 585) casse sur Python 3.6 du serveur
 
 router = APIRouter(prefix="/api/respondents", tags=["respondents"])
 
 # ✅ GET ALL RESPONDENTS
-@router.get("/", response_model=list[RespondentResponse])
+@router.get("/", response_model=List[RespondentResponse])
 async def get_all_respondents(db: Session = Depends(get_db)):
     """
     Récupère tous les répondants
