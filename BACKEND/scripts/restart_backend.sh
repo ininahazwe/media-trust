@@ -33,9 +33,14 @@ mkdir -p "$LOG_DIR"
 PORT="$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2)"
 PORT="${PORT:-8000}"
 
+PYBIN="python3"
+if [ -x /usr/bin/python3.12 ]; then
+    PYBIN="/usr/bin/python3.12"
+fi
+
 if [ ! -f "$VENV/bin/activate" ]; then
-    echo "[deploy] Aucun venv trouvé, création..."
-    python3 -m venv "$VENV"
+    echo "[deploy] Aucun venv trouvé, création avec $PYBIN..."
+    "$PYBIN" -m venv "$VENV"
 fi
 
 echo "[deploy] Installation des dépendances..."
