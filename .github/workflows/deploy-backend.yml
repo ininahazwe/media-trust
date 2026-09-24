@@ -1,0 +1,69 @@
+name: Deploy Backend to cPanel
+
+# Déploie automatiquement le dossier BACKEND/ sur le serveur cPanel
+# dès qu'un push sur main modifie ce dossier (ou à la demande via
+# l'onglet "Actions" > "Run workflow").
+#
+# Secrets requis (Settings > Secrets and variables > Actions) :
+#   CPANEL_SSH_HOST         hôte SSH du serveur cPanel
+#   CPANEL_SSH_PORT         port SSH (souvent différent de 22 sur cPanel)
+#   CPANEL_SSH_USER         utilisateur cPanel (ex: dxtrmfwa)
+#   CPANEL_SSH_PRIVATE_KEY  clé privée SSH dédiée au déploiement
+#   CPANEL_REMOTE_PATH      chemin absolu du dossier backend sur le serveur
+#                           (ex: /home/dxtrmfwa/BACKEND)
+#
+# Voir DOCUMENTATION/DEPLOYMENT_CPANEL.md pour la mise en place complète.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "BACKEND/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync BACKEND/ to cPanel via rsync over SSH
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: >-
+            -avzr --delete
+            --exclude=venv/
+            --exclude=__pycache__/
+            --exclude=.env
+            --exclude=.env.example
+            --exclude=*.db
+            --exclude=*.sqlite
+            --exclude=*.log
+            --exclude=nohup.out
+            --exclude=logs/
+            --exclude=.git*
+          path: BACKEND/
+          remote_path: ${{ secrets.CPANEL_REMOTE_PATH }}
+          remote_host: ${{ secrets.CPANEL_SSH_HOST }}
+          remote_port: ${{ secrets.CPANEL_SSH_PORT }}
+          remote_user: ${{ secrets.CPANEL_SSH_USER }}
+          remote_key: ${{ secrets.CPANEL_SSH_PRIVATE_KEY }}
+
+      - name: Install dependencies & restart backend
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.CPANEL_SSH_HOST }}
+          port: ${{ secrets.CPANEL_SSH_PORT }}
+          username: ${{ secrets.CPANEL_SSH_USER }}
+          key: ${{ secrets.CPANEL_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            cd "${{ secrets.CPANEL_REMOTE_PATH }}"
+            chmod +x scripts/restart_backend.sh
+            bash scripts/restart_backend.sh
