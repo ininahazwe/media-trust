@@ -489,7 +489,7 @@ export default function MTIDashboard() {
                     onClick={handleRefresh}
                     disabled={refreshing}
                 >
-                  {refreshing ? 'Actualisation…' : '↻ Actualiser'}
+                  {refreshing ? 'Update…' : '↻ Update'}
                 </button>
               </div>
             </div>
