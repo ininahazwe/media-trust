@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = 'https://index-media.mfwa.org';
 
@@ -400,47 +400,50 @@ export default function MTIDashboard() {
   const [dimensions, setDimensions] = useState({});
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
+  const load = useCallback(async () => {
+    try {
+      // 1. Sync Kobo
+      const syncRes = await fetch(`${API_URL}/api/dashboard/sync-kobo`, { method: 'POST' });
+      const syncData = await syncRes.json();
+      setLastSync(syncData.last_sync);
 
-        // 1. Sync Kobo
-        const syncRes = await fetch(`${API_URL}/api/dashboard/sync-kobo`, { method: 'POST' });
-        const syncData = await syncRes.json();
-        setLastSync(syncData.last_sync);
+      // 2. Parallel fetch
+      const [dashRes, dimRes, outRes, anaRes] = await Promise.all([
+        fetch(`${API_URL}/api/dashboard/`),
+        fetch(`${API_URL}/api/dashboard/dimensions`),
+        fetch(`${API_URL}/api/dashboard/outlets-details`),
+        fetch(`${API_URL}/api/dashboard/analytics`),
+      ]);
 
-        // 2. Parallel fetch
-        const [dashRes, dimRes, outRes, anaRes] = await Promise.all([
-          fetch(`${API_URL}/api/dashboard/`),
-          fetch(`${API_URL}/api/dashboard/dimensions`),
-          fetch(`${API_URL}/api/dashboard/outlets-details`),
-          fetch(`${API_URL}/api/dashboard/analytics`),
-        ]);
+      const [dashData, dimData, outData, anaData] = await Promise.all([
+        dashRes.json(), dimRes.json(), outRes.json(), anaRes.json(),
+      ]);
 
-        const [dashData, dimData, outData, anaData] = await Promise.all([
-          dashRes.json(), dimRes.json(), outRes.json(), anaRes.json(),
-        ]);
-
-        setDash(dashData);
-        setDimensions(dimData);
-        setOutlets(outData.outlets || outData.top_outlets || []);
-        setAnalytics(anaData);
-        setError(null);
-      } catch (e) {
-        setError(e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    load();
-    const iv = setInterval(load, 60000);
-    return () => clearInterval(iv);
+      setDash(dashData);
+      setDimensions(dimData);
+      setOutlets(outData.outlets || outData.top_outlets || []);
+      setAnalytics(anaData);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
   }, []);
+
+  // Chargement initial uniquement — plus de rafraîchissement automatique.
+  useEffect(() => {
+    setLoading(true);
+    load().finally(() => setLoading(false));
+  }, [load]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
 
   if (loading) return <Loading />;
   if (error) return (
@@ -475,11 +478,20 @@ export default function MTIDashboard() {
                     <button key={t} style={S.btn(filter === t)} onClick={() => setFilter(t)}>{t}</button>
                 ))}
               </div>
-              {lastSync && (
-                  <span style={{ fontSize: 11, color: '#aaa' }}>
-                Last sync: {new Date(lastSync).toLocaleTimeString()}
-              </span>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {lastSync && (
+                    <span style={{ fontSize: 11, color: '#aaa' }}>
+                  Last sync: {new Date(lastSync).toLocaleTimeString()}
+                </span>
+                )}
+                <button
+                    style={{ ...S.btn(false), opacity: refreshing ? 0.6 : 1, cursor: refreshing ? 'default' : 'pointer' }}
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                >
+                  {refreshing ? 'Actualisation…' : '↻ Actualiser'}
+                </button>
+              </div>
             </div>
           </div>
 
