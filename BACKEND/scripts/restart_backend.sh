@@ -38,8 +38,20 @@ if [ -x /usr/bin/python3.12 ]; then
     PYBIN="/usr/bin/python3.12"
 fi
 
-if [ ! -f "$VENV/bin/activate" ]; then
-    echo "[deploy] Aucun venv trouvé, création avec $PYBIN..."
+# Le venv doit exister ET tourner sur Python >= 3.8 (requis par
+# fastapi/pydantic du requirements.txt). S'il est absent, ou trop
+# ancien (ex: laissé par un run précédent en échec), on le recrée.
+RECREATE_VENV=false
+if [ ! -f "$VENV/bin/python" ]; then
+    RECREATE_VENV=true
+elif ! "$VENV/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+    echo "[deploy] venv existant trop ancien ($("$VENV/bin/python" --version 2>&1)), recréation..."
+    RECREATE_VENV=true
+fi
+
+if [ "$RECREATE_VENV" = true ]; then
+    echo "[deploy] (Re)création du venv avec $PYBIN..."
+    rm -rf "$VENV"
     "$PYBIN" -m venv "$VENV"
 fi
 
