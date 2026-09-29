@@ -4,3 +4,4 @@ BACKEND/.env
 BACKEND/mfwa_mti.db
 mti-dashboard/node_modules/
 .idea/
+Claude outputs/
