@@ -1,10 +1,13 @@
-# Déploiement automatique du backend sur cPanel (GitHub Actions)
+# Déploiement automatique sur cPanel (GitHub Actions)
 
 Ce document explique comment mettre en place le déploiement automatique
-du dossier `BACKEND/` vers le serveur cPanel à chaque push sur `main`.
+du backend (`BACKEND/`) et du dashboard (`mti-dashboard/`) vers le
+serveur cPanel à chaque push sur `main`.
 
-Le workflow correspondant est `.github/workflows/deploy-backend.yml`.
-Il ne touche jamais au frontend (`mti-dashboard/`).
+Deux workflows indépendants, chacun ne se déclenchant que si son propre
+dossier change :
+- `.github/workflows/deploy-backend.yml` → `BACKEND/**`
+- `.github/workflows/deploy-dashboard.yml` → `mti-dashboard/**`
 
 ## Comment ça marche
 
